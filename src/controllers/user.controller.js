@@ -10,17 +10,36 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { subscribe } from "diagnostics_channel";
 
 const generateAccessAndRefreshToken = async (userId) => {
-  const user = await User.findById(userId);
+  try {
+    const user = await User.findById(userId);
 
-  const accessToken = user.generateAccessToken();
-  const refreshToken = user.generateRefreshToken();
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
 
-  user.refreshToken = refreshToken;
-  await user.save({ validateBeforeSave: false });
-};
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+    return { accessToken, refreshToken }
+  } catch (error) {
+    console.log(error);
+    then new ApiError(500, "Something went wrong while generating ")
+    
+  }
+}
 
-const registerUser = asyncHandler(async (req, res) => {
-  const { fullname, email, userName, password } = req.body;
+  const registerUser = asyncHandler(async (req, res) => {
+  
+      // get user details from frontend threw POSTMAN
+    // validation - data not empty
+    // check if user already exist or not. check    username, email.
+    // check for images, check for avatar
+    // upload image & avatar to cloudinary 
+    // create user object - create entry in DB
+    // remove password and refresh token field from response
+    // check for user creation
+    // return response
+    const { fullname, email, userName, password } = req.body;
+    
+    
 
   //validation
   if (
@@ -46,7 +65,7 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(409, "Avatar is missing");
   }
 
-  // const avatar = await uploadOnCloudinary(avatarLocalPath);
+  const avatar = await uploadOnCloudinary(avatarLocalPath);
 
   // let coverImage = "";
   // if (coverLocalPath) {
@@ -115,8 +134,8 @@ const loginUser = asyncHandler(async (req, res) => {
 
   //validation
 
-  if (!email) {
-    throw new ApiError(400, "email is required");
+  if (!email && !username) {
+    throw new ApiError(400, "username and email is required");
   }
 
   const user = await User.findOne({
@@ -161,10 +180,10 @@ const logoutUser = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(
     req.user._id,
     {
-      $set: {
-        refreshToken: undefined,
+      $unset: {
+        refreshToken:1,
     
-      },
+      }
     }, {
     new: true
   })
@@ -183,16 +202,16 @@ const logoutUser = asyncHandler(async (req, res) => {
 
 })
 
-//refreshtoken generatting
+//refreshtoken generating
       
-
-    const refreshAccessToken = asyncHandler(async (req, res) => {
+const refreshAccessToken = asyncHandler(async (req, res) => {
   const inComingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
 
   if (!inComingRefreshToken) {
     throw new ApiError(401, "Unauthorised user")
+  }
     
-    try {
+try {
   const decodedToken = jwt.verify(
     inComingRefreshToken,
     process.env.REFRESH_TOKEN_SECRET
@@ -212,7 +231,7 @@ const logoutUser = asyncHandler(async (req, res) => {
             secure: true,
         }
 
-        const { accessToken, newRefreshToken } = await generateAccessAndRefreshTokens(user._id)
+     generateAccessAndRefreshTokenreshToken } = await generateAccessAndRefreshToken(user._id)
 
         return res
             .status(200)
@@ -225,12 +244,12 @@ const logoutUser = asyncHandler(async (req, res) => {
                     "Access token refreshed"
                 )
             )
-    } catch (error) {
+     catch (error) {
   throw new ApiError (500,"Something went wrong while refreshin access token")
 }
-}
-})
 
+})
+// password change controller
 const changeCurrentPassword = asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body
   const user = await User.findById(req.user?._id)
@@ -273,13 +292,16 @@ const updateAvatar = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Avatar is missing")
   }
   const avatar = await uploadOnCloudinary(avatarLocalPath)
-  if (avatar.url) {
+  if (!avatar.url) {
     throw new ApiError(400, "Error while uploading avatar")
   }
 
   const user = await user.findByIdAndUpdate(
     req.user?._id,
-    { $set: { avatar: avatar.url } },
+    {
+      $set:
+        { avatar: avatar.url }
+    },
     { new: true }
   ).select("-password")
 
@@ -293,6 +315,7 @@ const updateAvatar = asyncHandler(async (req, res) => {
 
 const updateCoverImage = asyncHandler(async (req, res) => {
   const coverImageLocalPath = req.file?.path
+  
   if (!coverImageLocalPath) {
     throw new ApiError(400, "Coverimage not found")
   }
@@ -320,36 +343,135 @@ const updateCoverImage = asyncHandler(async (req, res) => {
 const getUserChannelProfile = asyncHandler(async (req, res) => {
   const { username } = req.param
   if (!username?.trim()) {
-    throw new ApiError(400,"usernma eis missing")
+    throw new ApiError(400, "username is missing")
   }
-  const channel = await User.aggregate({
+  const channel = await User.aggregate([
     //here we matching user
     {
-  $match: {
-    username: username?.toLowerCase()
+      $match: {
+        username: username?.toLowerCase()
   
-  }
+      }
     },
 
     //here we counting how many subscriber via channel
-  {
-   $lookup: {
-    from: "subcriptions",
-    localField: "_id",
-    foregnField: "channel",
-    as:"subscribers"
-  }
+    {
+      $lookup: {
+        from: "subcriptions",
+        localField: "_id",
+        foregnField: "channel",
+        as: "subscribers"
+      }
     },
     {
-   $lookup: {
-    from: "subcriptions",
-    localField: "_id",
-    foregnField: "subscriber",
-    as:"subscribedTo"
-  }
-   }, 
-  })
-  })
+      $lookup: {
+        from: "subcriptions",
+        localField: "_id",
+        foregnField: "subscriber",
+        as: "subscribedTo"
+      }
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers"
+        },
+        channelsSubcribedToCount: {
+          $size: "$subscribedTo"
+        },
+        isSubscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false
+          }
+        }
+      }
+    },
 
-export { registerUser, loginUser, refreshAccessToken, logoutUser };
+    //here we sending selected values only.
+    {
+      $project: {
+        fullName: 1,
+        username: 1,
+        subscribersCount: 1,
+        channelsSubcribedToCount: 1,
+        isSubscribed: 1,
+        avatar: 1,
+        coverImage: 1,
+        email: 1,
+        
+      }
+    }
+  ])
+
+  //console.log(channel)
+
+  if (!channel?.length) {
+    throw new ApiError(404, "Channel doesn't exists")
+  }
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, channel[0], "User channel fetched successfully.")
+    )
+
+})
+
+const getWatchHistory = asyncHandler(async (req, res) => {
+  const user = await User.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(req.user._id)
+      }
+    },
+    {
+      $lookup: {
+        from: "videos",
+        localField: "watchHistory",
+        foregnField: "_id",
+        as: "watchHistory",
+        pipeline: [
+          {
+            $lookup: {
+              from: "user",
+              localField: "owner",
+              foregnField: "_id",
+              as: "owner",
+              pipeline: [
+                {
+                  $project: {
+                    fullName: 1,
+                    username: 1,
+                    avatar:1,
+                  }
+                }
+              ]
+          }
+        
+        
+      }
+    , {
+      $addFields: {
+        owner: {
+          $first: "$owner"
+        }
+      }
+    }
+  ]}
+}])
+
+return res
+  .status(200)
+  .json(
+    new ApiError(
+      200,
+      user,
+      user[0].watchHistory,
+      "Watch history fetched successfully"
+      )
+)
+    })
+
+export { registerUser, loginUser, refreshAccessToken, logoutUser,changeCurrentPassword, getCurrentUser,updateAccountDetails,updateCoverImage,getWatchHistory, updateAvatar,getUserChannelProfile};
                           
